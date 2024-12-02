@@ -193,3 +193,152 @@ and sex.
 There are some cities, such as Atlanta and Richmond, that have an odds ratio 
 approximately equal to 1, which suggests that gender has no association in 
 solving homicides for those cities. 
+
+# Problem 3
+
+## Load and clean data for regression analysis
+```{r load_clean_birthweight}
+birthweight_df = 
+  read_csv(file = "data/birthweight.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    babysex = 
+        case_match(babysex,
+            1 ~ "male",
+            2 ~ "female"
+        ),
+    babysex = as.factor(babysex),
+    frace = 
+        case_match(frace,
+            1 ~ "white",
+            2 ~ "black", 
+            3 ~ "asian", 
+            4 ~ "puerto rican", 
+            8 ~ "other",
+            9 ~ "unknown"),
+    frace = as.factor(frace),
+    mrace = 
+        case_match(mrace,
+            1 ~ "white",
+            2 ~ "black", 
+            3 ~ "asian", 
+            4 ~ "puerto rican",
+            8 ~ "other"),
+    mrace = as.factor(mrace),
+    malform = as.logical(malform)
+  ) 
+```
+
+## Check for missing data
+```{r check_missing_data}
+sum(is.na(birthweight_df))
+```
+
+There are no missing data in the birthweight dataset. 
+
+## Modeling process
+
+### Stepwise selection
+```{r perform_stepwise_selection}
+proposed_model = 
+  lm(bwt ~ ., data = birthweight_df) |>
+  step(direction = "backward", trace = 0)
+```
+
+For the modeling process, stepwise selection using backward elimination was 
+performed to determine and select variables to be included in the proposed 
+linear regression model.
+
+After fitting a regression model with all the variables, backward elimination 
+removes the least significant predictor for each step, until the model is left 
+with statistically significant predictors. 
+
+## Predictors selected by stepwise selection
+```{r display_stepwise_predictors}
+proposed_model |>
+  broom::tidy() |>
+  knitr::kable(digits = 3)
+```
+
+Based on the result of the stepwise selection, the regression model will 
+include the following variables as predictors for `bwt`: 
+
+* `babysex`
+* `bhead`
+* `blength`
+* `delwt`
+* `fincome`
+* `gaweeks`
+* `mheight`
+* `mrace`
+* `parity`
+* `ppwt`
+* `smoken`
+
+### Plot the model residuals against fitted values
+```{r plot_residuals_fitted_values}
+birthweight_df |>
+  add_residuals(proposed_model) |>
+  add_predictions(proposed_model) |>
+  ggplot(aes(y = resid, x = pred)) +
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  labs(title = "Model Residuals Against Fitted Values",
+       y = "Residual", 
+       x = "Fitted Value")
+```
+
+## Make comparison in terms of the cross-validated prediction error
+
+### Train/Test split
+```{r train_test_split}
+bwt_cv_df = 
+  crossv_mc(birthweight_df, 100) |>
+  mutate(train = map(train, as_tibble),
+         test = map(train, as_tibble))
+```
+
+### Fit models and obtain RMSE
+```{r model_cross_validation}
+bwt_cv_df =
+  bwt_cv_df |>
+  mutate(
+    model_1 = map(train, \(df) lm(bwt ~ babysex + bhead + blength + delwt 
+                                 + fincome + gaweeks + mheight + mrace 
+                                 + parity + ppwt + smoken, data = df)),
+    model_2 = map(train, \(df) lm(bwt ~ blength + gaweeks, data = df)),
+    model_3 = map(train, \(df) lm(bwt ~ bhead * blength * babysex, data = df)),
+  ) |>
+  mutate(
+    rmse_1 = map2_dbl(model_1, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_2 = map2_dbl(model_2, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_3 = map2_dbl(model_3, test, \(mod, df) rmse(model = mod, data = df))
+  )
+```
+
+* `model_1` is the proposed regression model
+* `model_2` includes length at birth and gestational age as predictors
+* `model_3` includes head circumference, length, sex, and all interactions 
+(including the three-way interaction) between these
+
+### Plot the cross-validated prediction error for each model 
+```{r plot_cv_prediction_error}
+bwt_cv_df |>
+  select(starts_with("rmse")) |>
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) |> 
+  mutate(model = fct_inorder(model)) |>
+  ggplot(aes(y = rmse, x = model, fill = model)) + 
+  geom_violin() + 
+  labs(title = "RMSE of the Models",
+       y = "RMSE", 
+       x = "Model")
+```
+
+Model 1 has the lowest RMSE, while model 2 has the highest RMSE out of the 
+three models. Subsequently, model 1 (the proposed regression model) is the most 
+appropriate model in predicting child's birth weight.
