@@ -1,0 +1,113 @@
+---
+title: "P8105 Homework 6"
+author: "Hyun Kim (hk3373)"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(modelr)
+library(mgcv)
+
+theme_set(theme_minimal() + 
+  theme(legend.position = "bottom", 
+      plot.title = element_text(hjust = 0.5)))
+
+knitr::opts_chunk$set(
+	fig.width = 8, 
+  fig.height = 6
+)
+```
+
+# Problem 1
+
+## Download 2017 Central Park weather data
+```{r download_weather_data}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+## Use 5000 bootstrap samples and produce estimates for each boostrap sample
+```{r produce_sample_estimates}
+boot_strap_df =
+  weather_df |>
+  bootstrap(n = 5000) |>
+  mutate(models = map(strap, \(df) lm(tmax ~ tmin, data = df)))
+
+r_squared_df =
+  boot_strap_df |>
+  mutate(r_squared = map(models, broom::glance)) |> 
+  select(-strap, -models) |> 
+  unnest(r_squared)
+
+log_beta_df = 
+  boot_strap_df |>
+  mutate(beta = map(models, broom::tidy)) |> 
+  select(-strap, -models) |> 
+  unnest(beta) |>
+  select(.id, term, estimate) |>
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
+  ) |>
+  rename(intercept = "(Intercept)") |>
+  mutate(log_beta = log(intercept * tmin))
+```
+
+## Plot distribution of the estimates
+
+### Estimate of r^2
+```{r plot_r_squared}
+r_squared_df |>
+  ggplot(aes(x = r.squared)) +
+  geom_density() + 
+  labs(y = "count",
+       x = "Estimate of r^2",
+       title = "Distribution of the Estimate of r^2")
+```
+
+The plot shows that the distribution of the estimate of r^2 is normal.
+
+### Estimate of log(B0 * B1)
+```{r plot_log_beta}
+log_beta_df |>
+  ggplot(aes(x = log_beta)) + 
+  geom_density() + 
+  labs(y = "count",
+       x = "Estimate of log(B0 * B1)",
+       title = "Distribution of the Estimate of log(B0 * B1)")
+```
+
+The plot shows that the distribution of the estimate of log(B0 * B1) is normal.
+
+## Compute 95% confidence interval for the estimates
+
+### CI of r^2 Estimate
+```{r r_squared_CI}
+r_squared_df |>
+  summarize(
+    r2_CI_lower = quantile(r.squared, 0.025),
+    r2_CI_upper = quantile(r.squared, 0.975)
+  ) |>
+  knitr::kable(digits = 3)
+```
+
+### CI of log(B0 * B1) Estimate
+```{r log_beta_CI}
+log_beta_df |>
+  summarize(
+    log_CI_lower = quantile(log_beta, 0.025),
+    log_CI_upper = quantile(log_beta, 0.975)
+  ) |>
+  knitr::kable(digits = 3)
+```
